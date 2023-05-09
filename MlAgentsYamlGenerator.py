@@ -1,13 +1,17 @@
 import argparse
 import json
+import os
 import random
+import time
 
 import yaml
 
 from FieldSpecs import InputIntSpec, InputBehaviorSpec, InputBoolSpec, InputStrSpec, InputFloatSpec
 from YamlBehaviorGenerator import MlAgentsYamlBehaviorGenerator
 
-_VERSION = 1.0
+_VERSION = 1.1
+_SLEEP_SECONDS_WHEN_FILE_EXISTS = 2
+_DEFAULT_BEHAVIOR_CONFIG_NAME = "default"
 
 
 class MlAgentsYamlGenerator(object):
@@ -35,6 +39,15 @@ class MlAgentsYamlGenerator(object):
 
     def __generate_yaml(self):
         behaviors = {}
+
+        if not self.__behavior_specs:
+            return {
+                MlAgentsYamlGenerator.__yaml_name: {
+                    _DEFAULT_BEHAVIOR_CONFIG_NAME: MlAgentsYamlBehaviorGenerator(
+                        _DEFAULT_BEHAVIOR_CONFIG_NAME).generate_behavior()
+                }
+            }
+
         for behavior_spec in self.__behavior_specs:
             valid_behavior_name_spec_names = [x.spec_name for x in behavior_spec.field_configs if x.num_states() > 1]
             for chosen_config in MlAgentsYamlGenerator.__product(
@@ -50,7 +63,6 @@ class MlAgentsYamlGenerator(object):
             spec_input = behavior_spec_file.read()
             behavior_spec_json = json.loads(spec_input)
 
-        self.__behavior_specs = []
         for behavior_spec_name in behavior_spec_json:
             field_specs = []
             for spec in behavior_spec_json[behavior_spec_name]:
@@ -70,24 +82,40 @@ class MlAgentsYamlGenerator(object):
                 raise Exception("Invalid type {0} given for spec {1}!".format(spec["type"], spec["name"]))
             self.__behavior_specs.append(InputBehaviorSpec(behavior_spec_name, field_specs))
 
-    def __init__(self, input_behavior_spec_path, output_yaml_file_name, hash_name=False):
+    def __init__(self, input_behavior_spec_path, output_yaml_file_name="", hash_name=False, print_to_console=False):
         self.__hash_name = hash_name
+        self.__behavior_specs = []
 
-        self.__read_behavior_specs(input_behavior_spec_path)
-        # TODO(logan): Create temp file and write to it instead of printing to console.
-        print(yaml.dump(self.__generate_yaml()))
+        if input_behavior_spec_path:
+            self.__read_behavior_specs(input_behavior_spec_path)
+
+        if print_to_console or not output_yaml_file_name:
+            print(yaml.dump(self.__generate_yaml()))
+        else:
+            with open(output_yaml_file_name, "w") as output_yaml_file:
+                yaml.dump(self.__generate_yaml(), output_yaml_file)
 
 
-if __name__ == "__main__":
+def validate_or_create_output_path(output_yaml_path):
+    if os.path.exists(output_yaml_path):
+        print("File at {0} already exists! Printing to console.".format(output_yaml_path))
+        time.sleep(_SLEEP_SECONDS_WHEN_FILE_EXISTS)
+        return True
+    return False
+
+
+def create_and_parse_arguments():
     parser = argparse.ArgumentParser(
         prog="MlAgentsYamlGenerator",
         usage="%(prog)s --input_json --output_yaml [options]"
     )
 
     parser.add_argument("--input_json",
-                        help="Path to behavior config json.")
+                        default="",
+                        help="Path to behavior config json. Program will create a default yaml if this flag is unset.")
     parser.add_argument("--output_yaml",
-                        help="Output path to write yaml file.")
+                        default="",
+                        help="Output path to write yaml file. Program will print yaml to console if this flag is unset.")
     parser.add_argument("--seed",
                         required=False,
                         help="Set random seed to make consistent picking values from ranges.")
@@ -96,7 +124,15 @@ if __name__ == "__main__":
                         action="store_true",
                         help="Whether to hash the behavior parameters name or not. Set this flag to use hashed names.")
     parser.add_argument("-v", "--version", action="version", version="%(prog)s {0}".format(_VERSION))
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    random.seed(args.seed)
-    MlAgentsYamlGenerator(args.input_json, args.output_yaml, hash_name=args.hash_name)
+
+if __name__ == "__main__":
+    args = create_and_parse_arguments()
+
+    print_to_console = validate_or_create_output_path(args.output_yaml)
+
+    if args.seed:
+        random.seed(args.seed)
+    MlAgentsYamlGenerator(args.input_json, args.output_yaml, hash_name=args.hash_name,
+                          print_to_console=print_to_console)
